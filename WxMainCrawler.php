@@ -4,7 +4,9 @@
  */
 class WxMainCrawler{
 	//微信搜狗链接
-	protected $url = "http://weixin.sogou.com/weixin?type=1&s_from=input&query=";
+	protected $url = "weixin.sogou.com/weixin?type=1&s_from=input&query=";
+	//微信公众号链接
+	protected $gzh_url = "mp.weixin.qq.com";
 	//返回网页格式
 	protected $url_back_format = "&ie=utf8&_sug_=n&_sug_type_=";
 	//curl参数
@@ -18,13 +20,15 @@ class WxMainCrawler{
 	protected $protocol = 'http';
 	//搜索参数
 	protected $search_text;
-	//公众号id
+	//爬取url
+	protected $request_url;
+	//搜索列表公众号id
 	protected $gzh_id;
-	//公众号头像
+	//搜索列表公众号头像
 	protected $gzh_avatar;
-	//公众号临时链接
+	//搜索列表公众号临时链接
 	protected $gzh_link = [];
-	//公众号汇总信息
+	//搜索列表公众号汇总信息
 	protected $gzh_info = [];
 	//客户端代理
 	protected $agent = [
@@ -46,9 +50,8 @@ class WxMainCrawler{
         "Opera/9.80 (Macintosh; Intel Mac OS X 10.6.8; U; fr) Presto/2.9.168 Version/11.52",
 	];
 
-	public function __construct($search_text='')
+	public function __construct()
 	{
-		$this->search_text = $search_text;
 	}
 
 	/**
@@ -66,7 +69,7 @@ class WxMainCrawler{
 			"ip_port" => $ip_obj->protocol."://".$ip_obj->ip.":".$ip_obj->port
 		];
 
-		var_dump($ip_arr); //test
+		echo "本次使用的ip代理：".$ip_arr['ip']." < - - > 完整ip地址：".$ip_arr['ip_port']." \n"; //test
 		return $ip_arr;
 	}
 
@@ -75,11 +78,12 @@ class WxMainCrawler{
 	 * @author leekachung <leekachung17@gmail.com>
 	 * @return [type] [description]
 	 */
-	public function searchWxList()
+	public function searchWxList($search_keyword)
 	{
+		$this->search_text = $search_keyword;
+		$this->request = $this->protocol."://".$this->url.$this->search_text.$this->url_back_format;
 		//执行爬虫
 		$content = $this->curlLink($this->randomIp());
-		echo $content;
 
 		//判断爬取内容是否成功
 		preg_match_all('|<label for="seccodeInput">(.*?)<\/label>|is', $content, $error);
@@ -90,8 +94,12 @@ class WxMainCrawler{
 		//正则匹配出公众号id
 		preg_match_all('|<label name="em_weixinhao">(.*?)<\/label>|is', $content, $this->gzh_id);
 		//正则匹配出公众号头像
-		preg_match_all('|<img height="32" width="32" class="shot-img" src="(.*?)\" onerror="errorHeadImage(this)">|is', $content, $this->gzh_avatar);
-		return $this->gzh_avatar;
+		preg_match_all('/<img.*?src=[\"|\']?(.*?)[\"|\']?\s.*?>/i', $content, $avatar);
+		for ($j=0; $j < count($avatar[1]); $j++) { 
+			if ($j % 4 == 0 && $j != 0) {
+				$this->gzh_avatar[] = substr($avatar[1][$j], 2);
+			}
+		}
 		//正则匹配出临时链接名称
 		for ($i=0; $i < count($this->gzh_id[1]); $i++) { 
 			preg_match_all('|<a target="_blank" uigs="account_name_'. $i .'" href="(.*?)\">|is',
@@ -101,11 +109,46 @@ class WxMainCrawler{
 			//汇总
 			$this->gzh_info[$i] = [
 				'gzh_id' => $this->gzh_id[1][$i],
-				'gzh_link' => $this->gzh_link[$i]
+				'gzh_link' => $this->gzh_link[$i],
+				'gzh_avatar' => $this->gzh_avatar[$i],
 			];
 		}
 		
 		return $this->gzh_info;
+	}
+
+	/**
+	 * getWxArticleList 获取某个公众号最近十篇推文
+	 * @author leekachung <leekachung17@gmail.com>
+	 * @param  [type] $gzh_link [description]
+	 * @return [type]           [description]
+	 */
+	public function getWxArticleList($gzh_link)
+	{
+		$this->request = $gzh_link;
+		//执行爬虫
+		$content = $this->curlLink($this->randomIp());
+
+		//判断爬取内容是否成功
+		preg_match_all('|<div class="weui_cell_hd wap_only">(.*?)<\/div>|is', $content, $error);
+		if (!empty($error[0])) {
+			return false;
+		}
+
+		preg_match_all('/var biz = \"(.*?)\"/', $content, $biz);
+		echo $biz[1][0];
+
+		echo "\n";
+		preg_match_all('/"content_url":\"(.*?)\"/', $content, $article_list_gather);
+		$article_list_gather = $article_list_gather[1];
+		foreach ($article_list_gather as $key => $value) {
+			//一定要https协议 才可抓取内容 因为http会重定向到https 导致无法获取
+			$article_list_gather[$key] = 
+				"https://".$this->gzh_url.html_entity_decode($value);
+		}
+		echo "\n";
+
+		return $article_list_gather;
 	}
 
 	/**
@@ -131,7 +174,7 @@ class WxMainCrawler{
 		//初始化curl
 		$ch = curl_init();
 		//配置参数
-		curl_setopt($ch, CURLOPT_URL, $this->url.$this->search_text.$this->url_back_format);
+		curl_setopt($ch, CURLOPT_URL, $this->request);
 		curl_setopt($ch, CURLOPT_HEADER, $this->curlopt_param['header']);
 		curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
 		$this->curlopt_param['post'] && curl_setopt($ch, CURLOPT_POST, $this->curlopt_param['post']);
@@ -140,6 +183,7 @@ class WxMainCrawler{
 		curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
 		$this->curlopt_param['cookiefile'] && curl_setopt($ch, CURLOPT_COOKIEFILE, $this->curlopt_param['cookiefile']);
 		$this->curlopt_param['cookiefile'] && curl_setopt($ch, CURLOPT_COOKIEJAR, $this->curlopt_param['cookiefile']);
+		//模拟来源
 		//curl_setopt($ch, CURLOPT_REFERER, 'http://weixin.sogou.com/');
 		curl_setopt($ch, CURLOPT_PROXY, $ip_arr['ip_port']);
 		curl_setopt($ch,CURLOPT_TIMEOUT,30); //允许执行的最长秒数
